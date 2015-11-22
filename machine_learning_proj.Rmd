@@ -1,0 +1,135 @@
+---
+title: "PML Project Writeup"
+author: "Jason Liggett"
+date: "11/22/2015"
+output: html_document
+---
+
+## Executive Summary
+Build a machine learning algorithm to predict activity quality from from the [Weight Lifting Exercises Dataset](http://groupware.les.inf.puc-rio.br/har). 
+
+Brief summary of the dataset:
+>Six young health participants were asked to perform one set of 10 repetitions of the >Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the >specification (Class A), throwing the elbows to the front (Class B), lifting the >dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and >throwing the hips to the front (Class E).^1^
+
+## Prepare for the Analysis
+Obtain the essential R libraries.
+```{r eval=FALSE}
+## packages used
+install.packages("RCurl")
+install.packages("caret")
+install.packages("rattle", dependencies=TRUE)
+```
+```{r}
+# get libraries needed for the analysis
+library(RCurl)
+library(caret)
+library(rattle)
+```
+
+## Get the Data
+The training and test data used are available at the following URLs:
+
++ Training data located at https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
++ Test set located at https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+```{r}
+# read csv data
+trainingURL <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testURL <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+training <- read.csv(trainingURL,header = TRUE, na.strings = c("NA", ""))
+test <- read.csv(testURL,header = TRUE, na.strings = c("NA", ""))
+```
+
+## Clean the Data
+Just a few steps to clean the data. First, remove the non-relevant columns: X, user_name, new_window, num_window, and all timestamp variables.
+```{r}
+# remove non relevant variables
+training <- training[,!grepl("X|user_name|timestamp|new_window|num_window",colnames(training))]
+test <- test[,!grepl("X|user_name|timestamp|new_window|num_window",colnames(test))]
+```
+Second, quite a few of the variables in the dataset contain too many NA values. Remove those variables.
+```{r}
+# remove variables with too many NA values
+training <- training[, (colSums(is.na(training)) == 0)]
+test <- test[, (colSums(is.na(test)) == 0)]
+```
+Finally, variables that have no variability are not useful when constructing a prediction model^2^. If they exist, let's get rid of them.
+```{r}
+# some variables have no variability at all and are not useful for constructing the prediction model
+zeroVarTrain <- nearZeroVar(training,saveMetrics=TRUE)
+training <- training[, zeroVarTrain[,'nzv']==0]
+zeroVarTest <- nearZeroVar(test,saveMetrics=TRUE)
+test <- test[, zeroVarTest[,'nzv']==0]
+```
+Check the size of the training and test sets to confirm they are the same size.
+```{r echo=TRUE}
+# confirm number of variables in each set is equal
+dim(training);dim(test)
+```
+
+## Create Training Sets
+70% of the training data will be used to build the model. The remaining 30% will be used to validate the accuracy of the model's prediction. 
+```{r}
+# create training and validation sets from training data
+set.seed(1234)
+inTrain = createDataPartition(y = training$classe, p = 0.7, list = FALSE)
+subtrain = training[inTrain,]
+validation = training[-inTrain,]
+```
+
+## Create the Model
+The random forest prediction model was chosen because it is one of the most used/accurate algorithms^2^ and works well with a dataset that contains many variables.
+```{r}
+# random forest
+modelFit2 <- train(classe ~., method="rf", data=subtrain, importance=TRUE,
+                  trControl = trainControl(method = "cv", number = 3))
+print(modelFit2$finalModel)
+```
+
+The model appears to have worked as intended. The OOB error rate and confusion matrix illustrate a high rate of accuracy for our model. The following Variable Importance Plot shows which variables of the training dataset have the greatest importance of the model.
+```{r echo=FALSE}
+varImpPlot(modelFit2$finalModel)
+```
+
+## Cross Validation
+Run the prediction model against the validation data. 
+```{r}
+# run random forrest model on validation set to check accuracy 
+set.seed(4321)
+pmodel2 <- predict(modelFit2,validation)
+confus <- confusionMatrix(validation$classe, pmodel2)
+confus$table
+```
+The confusion matrix above shows that our model did a fine job predicting the validation data. Now, determine the error rate of the prediction that utilized the validation data.
+```{r}
+# error rate for validation data
+predMatrix = with(validation,table(pmodel2,classe))
+sum(diag(predMatrix))/sum(as.vector(predMatrix)) 
+```
+The 0.99% accuracy rate is very good. We are happy with this model.
+
+## Run the Prediction Model on Test Dataset
+The test dataset consisted of 20 rows. These are the predicted `classe` variable for the 20 rows.
+```{r}
+# prediction output of test data
+print(predict(modelFit2,test))
+```
+
+## Create Test Script Files for Project Submission
+```{r}
+# create test script files for project submission
+answers = predict(modelFit2,test)
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(answers)
+```
+
+# References
+1. Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+2. http://sux13.github.io/DataScienceSpCourseNotes/8_PREDMACHLEARN/Practical_Machine_Learning_Course_Notes.html
